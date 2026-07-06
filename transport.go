@@ -21,7 +21,9 @@ var retryStatuses = map[int]bool{429: true, 503: true}
 
 // idempotentMethods are safe to retry after a network error, where the outcome
 // is unknown. A POST /tasks must NOT be retried on a network error — it might
-// have created a task the SDK never saw the response for, double-charging.
+// have created a task the SDK never saw the response for, double-charging. The
+// exception: a request carrying an Idempotency-Key header IS safe to retry
+// (the server collapses duplicates of the same key+body into the first task).
 var idempotentMethods = map[string]bool{
 	http.MethodGet:    true,
 	http.MethodHead:   true,
@@ -32,6 +34,12 @@ var idempotentMethods = map[string]bool{
 const (
 	maxBackoff    = 8 * time.Second
 	maxRetryAfter = 60 * time.Second
+
+	idempotencyKeyHeader = "Idempotency-Key"
+	// idempotencyProcessingCode is the error_code of the retryable 409 the
+	// server returns while the first request with the same Idempotency-Key is
+	// still in flight (honours Retry-After).
+	idempotencyProcessingCode = "IDEMPOTENCY_KEY_PROCESSING"
 )
 
 // transport performs JSON request/response framing, authentication, retries
@@ -46,6 +54,13 @@ type transport struct {
 
 // request performs an HTTP request and returns the parsed JSON envelope.
 func (t *transport) request(ctx context.Context, method, path string, body map[string]any, params url.Values) (map[string]any, error) {
+	env, _, err := t.requestWithHeaders(ctx, method, path, body, params, nil)
+	return env, err
+}
+
+// requestWithHeaders is request plus optional extra request headers; it also
+// returns the response headers (nil on error).
+func (t *transport) requestWithHeaders(ctx context.Context, method, path string, body map[string]any, params url.Values, reqHeaders map[string]string) (map[string]any, http.Header, error) {
 	fullURL := t.buildURL(path, params)
 
 	var rawBody []byte
@@ -53,9 +68,13 @@ func (t *transport) request(ctx context.Context, method, path string, body map[s
 		var err error
 		rawBody, err = json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("hiapi: encoding request body: %w", err)
+			return nil, nil, fmt.Errorf("hiapi: encoding request body: %w", err)
 		}
 	}
+	// An Idempotency-Key makes the POST safe to retry: the server collapses
+	// duplicates of the same key+body into the first task.
+	hasIdempotencyKey := reqHeaders[idempotencyKeyHeader] != ""
+	retriableMethod := idempotentMethods[strings.ToUpper(method)] || hasIdempotencyKey
 
 	for attempt := 0; ; attempt++ {
 		var reader io.Reader
@@ -64,7 +83,7 @@ func (t *transport) request(ctx context.Context, method, path string, body map[s
 		}
 		req, err := http.NewRequestWithContext(ctx, method, fullURL, reader)
 		if err != nil {
-			return nil, &ConnectionError{URL: fullURL, Err: err}
+			return nil, nil, &ConnectionError{URL: fullURL, Err: err}
 		}
 		req.Header.Set("Authorization", "Bearer "+t.apiKey)
 		req.Header.Set("Accept", "application/json")
@@ -72,52 +91,70 @@ func (t *transport) request(ctx context.Context, method, path string, body map[s
 		if rawBody != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
+		for k, v := range reqHeaders {
+			req.Header.Set(k, v)
+		}
 
 		resp, err := t.httpClient.Do(req)
 		if err != nil {
 			// Never retry if the caller's context was cancelled or timed out.
 			if ctx.Err() != nil {
-				return nil, &ConnectionError{URL: fullURL, Err: ctx.Err()}
+				return nil, nil, &ConnectionError{URL: fullURL, Err: ctx.Err()}
 			}
-			// Only retry network failures for idempotent methods; a retried POST
-			// could silently create a second task.
-			if idempotentMethods[strings.ToUpper(method)] && attempt < t.maxRetries {
+			// Only retry network failures for idempotent methods (or a POST
+			// carrying an Idempotency-Key); a blindly retried POST could
+			// silently create a second task.
+			if retriableMethod && attempt < t.maxRetries {
 				if waitErr := sleep(ctx, backoffDelay(attempt)); waitErr != nil {
-					return nil, &ConnectionError{URL: fullURL, Err: waitErr}
+					return nil, nil, &ConnectionError{URL: fullURL, Err: waitErr}
 				}
 				continue
 			}
-			return nil, &ConnectionError{URL: fullURL, Err: err}
+			return nil, nil, &ConnectionError{URL: fullURL, Err: err}
 		}
 
 		data, status, headers, readErr := readResponse(resp)
 		if readErr != nil {
 			// A failure reading the body is a network-level failure. Honor
-			// cancellation, and retry only for idempotent methods (a POST may
-			// have already created a task server-side).
+			// cancellation, and retry only when safe (see above).
 			if ctx.Err() != nil {
-				return nil, &ConnectionError{URL: fullURL, Err: ctx.Err()}
+				return nil, nil, &ConnectionError{URL: fullURL, Err: ctx.Err()}
 			}
-			if idempotentMethods[strings.ToUpper(method)] && attempt < t.maxRetries {
+			if retriableMethod && attempt < t.maxRetries {
 				if waitErr := sleep(ctx, backoffDelay(attempt)); waitErr != nil {
-					return nil, &ConnectionError{URL: fullURL, Err: waitErr}
+					return nil, nil, &ConnectionError{URL: fullURL, Err: waitErr}
 				}
 				continue
 			}
-			return nil, &ConnectionError{URL: fullURL, Err: readErr}
+			return nil, nil, &ConnectionError{URL: fullURL, Err: readErr}
 		}
 
 		if status >= 200 && status < 300 {
-			return decodeJSON(data, status)
+			env, err := decodeJSON(data, status)
+			if err != nil {
+				return nil, nil, err
+			}
+			return env, headers, nil
 		}
 
 		if retryStatuses[status] && attempt < t.maxRetries {
 			if waitErr := sleep(ctx, retryDelay(attempt, headers)); waitErr != nil {
-				return nil, &ConnectionError{URL: fullURL, Err: waitErr}
+				return nil, nil, &ConnectionError{URL: fullURL, Err: waitErr}
 			}
 			continue
 		}
-		return nil, errorFromResponse(status, data)
+		apiErr := errorFromResponse(status, data)
+		// A 409 IDEMPOTENCY_KEY_PROCESSING means the first request with this
+		// key is still in flight; honour Retry-After and retry — the next
+		// attempt hits the replay path and returns the task.
+		if hasIdempotencyKey && status == http.StatusConflict &&
+			apiErr.ErrorCode == idempotencyProcessingCode && attempt < t.maxRetries {
+			if waitErr := sleep(ctx, retryDelay(attempt, headers)); waitErr != nil {
+				return nil, nil, &ConnectionError{URL: fullURL, Err: waitErr}
+			}
+			continue
+		}
+		return nil, nil, apiErr
 	}
 }
 

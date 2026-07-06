@@ -82,6 +82,47 @@ page, err := client.Tasks.List(ctx, hiapi.ListParams{Page: 1, Size: 20}) // newe
 [model page](https://docs.hiapi.ai/models/). Don't put callback fields inside
 `Input`; pass `Callback` separately.
 
+## Model routes
+
+Some models expose multiple routes (e.g. `pro`, `ext`) with different pricing or
+upstream capacity. Pass `Route` instead of writing the `model@route` suffix:
+
+```go
+created, err := client.Tasks.Create(ctx, hiapi.CreateParams{
+	Model: "gpt-image-2/text-to-image",
+	Route: "pro", // preferred over Model: "...@pro"
+	Input: map[string]any{"prompt": "..."},
+})
+```
+
+Omitting `Route` (or passing `"default"`) uses the model's default route. An
+unknown route fails fast with a 400 whose message lists the available routes.
+The legacy `Model: "x@pro"` spelling keeps working. When a task was submitted
+with `Route`, its detail echoes `task.Route` and `task.Model` holds the
+resolved full name (`x@pro`).
+
+## Idempotent retries
+
+Set `IdempotencyKey` (sent as the `Idempotency-Key` header, ≤255 bytes) to make
+task submission safe to retry — same key + same body always returns the first
+task instead of creating and billing a new one:
+
+```go
+created, err := client.Tasks.Create(ctx, hiapi.CreateParams{
+	Model:          "seedance-2-0",
+	Input:          map[string]any{"prompt": "..."},
+	IdempotencyKey: "order-8472:video", // a stable key you derive per job
+})
+if created.IdempotentReplay {
+	log.Println("hit the idempotency cache; no new task created")
+}
+```
+
+With a key set, the SDK also retries the POST on network errors and
+automatically waits out `409 IDEMPOTENCY_KEY_PROCESSING` (the first request is
+still in flight). Reusing a key with a **different** body fails with
+`ErrIdempotencyKeyMismatch` — that's a key-construction bug, not retryable.
+
 ## Webhooks
 
 If you set a **Webhook signing key** in the HiAPI console, terminal callbacks are
@@ -119,8 +160,10 @@ raw body) with `errors.As`.
 | `ErrModelUnavailable` | `MODEL_UNAVAILABLE` — retry or switch model |
 | `ErrTaskTimeout` / `ErrStorageUnavailable` | retryable upstream errors |
 | `ErrServiceUnavailable` | 503 — platform busy (auto-retried) |
+| `ErrIdempotencyKeyProcessing` | 409 — same key still in flight (auto-retried; retryable) |
+| `ErrIdempotencyKeyMismatch` | 422 — key reused with a different body (**not** retryable) |
 | `*APIError` | any non-2xx response (wraps the sentinels above) |
-| `*ConnectionError` | network failure (auto-retried for reads only — **not** `Create`) |
+| `*ConnectionError` | network failure (auto-retried for reads only — **not** a keyless `Create`) |
 | `*TaskFailedError` | a polled task ended in `status=fail` |
 | `*PollTimeoutError` | `Run` / `Wait` exceeded its timeout |
 | `*WebhookError` | bad signature or stale timestamp |
@@ -143,9 +186,11 @@ case err != nil:
 429/503 are retried automatically with exponential backoff (`WithMaxRetries`,
 default 2; honors `Retry-After`). Network errors are retried **only for
 idempotent GETs** (`Retrieve` / `List`, and the polling inside `Wait` / `Run`).
-The `POST` that `Create` issues is **never** retried on a network failure, so a
-dropped connection can't silently create a second, double-charged task — if
-`Create` returns a `*ConnectionError`, confirm with `List` before retrying.
+The `POST` that `Create` issues is **never** retried on a network failure —
+unless you set `IdempotencyKey`, which makes the retry safe server-side.
+Without a key, a dropped connection can't silently create a second,
+double-charged task — if `Create` returns a `*ConnectionError`, confirm with
+`List` before retrying.
 
 ## Configuration
 

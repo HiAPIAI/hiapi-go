@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -30,19 +31,40 @@ type CreateParams struct {
 	// Callback optionally configures a webhook, e.g.
 	// {"url": ..., "when": "final"}. Do not put callback fields inside Input.
 	Callback map[string]any
+	// Route optionally selects a model route (e.g. "pro") without writing the
+	// model@route suffix form: Model "x" + Route "pro" is the preferred
+	// spelling of Model "x@pro". Empty/"default" both mean the default route.
+	// An unknown route is rejected with a 400 listing the available routes.
+	Route string
+	// IdempotencyKey (sent as the Idempotency-Key header, at most 255 bytes)
+	// makes retries safe: resending the same key + body returns the original
+	// task (CreatedTask.IdempotentReplay is then true) instead of creating and
+	// billing a second one. The transport also becomes willing to retry this
+	// POST on network errors. Reusing a key with a different body fails with
+	// error_code IDEMPOTENCY_KEY_MISMATCH ([ErrIdempotencyKeyMismatch]).
+	IdempotencyKey string
 }
 
 // Create submits a task and returns immediately with its task id.
 func (t *Tasks) Create(ctx context.Context, params CreateParams) (*CreatedTask, error) {
 	body := map[string]any{"model": params.Model, "input": params.Input}
+	if params.Route != "" {
+		body["route"] = params.Route
+	}
 	if params.Callback != nil {
 		body["callback"] = params.Callback
 	}
-	env, err := t.transport.request(ctx, "POST", "/tasks", body, nil)
+	var reqHeaders map[string]string
+	if params.IdempotencyKey != "" {
+		reqHeaders = map[string]string{idempotencyKeyHeader: params.IdempotencyKey}
+	}
+	env, respHeaders, err := t.transport.requestWithHeaders(ctx, "POST", "/tasks", body, nil, reqHeaders)
 	if err != nil {
 		return nil, err
 	}
-	return createdTaskFromMap(dataObject(env)), nil
+	created := createdTaskFromMap(dataObject(env))
+	created.IdempotentReplay = strings.EqualFold(respHeaders.Get("Idempotent-Replay"), "true")
+	return created, nil
 }
 
 // Retrieve fetches a task's current status and (when success) its output.
@@ -150,13 +172,16 @@ func (t *Tasks) Wait(ctx context.Context, taskID string, params WaitParams) (*Ta
 }
 
 // RunParams are the inputs to [Tasks.Run] — Create plus Wait in one call.
+// Route and IdempotencyKey are forwarded to Create (see [CreateParams]).
 type RunParams struct {
-	Model        string
-	Input        map[string]any
-	Callback     map[string]any
-	PollInterval time.Duration
-	Timeout      time.Duration
-	OnUpdate     OnUpdate
+	Model          string
+	Input          map[string]any
+	Callback       map[string]any
+	Route          string
+	IdempotencyKey string
+	PollInterval   time.Duration
+	Timeout        time.Duration
+	OnUpdate       OnUpdate
 }
 
 // Run creates a task and blocks until it finishes — the one-call workflow.
@@ -165,9 +190,11 @@ type RunParams struct {
 // independent of polling; set it if you also want a webhook.
 func (t *Tasks) Run(ctx context.Context, params RunParams) (*Task, error) {
 	created, err := t.Create(ctx, CreateParams{
-		Model:    params.Model,
-		Input:    params.Input,
-		Callback: params.Callback,
+		Model:          params.Model,
+		Input:          params.Input,
+		Callback:       params.Callback,
+		Route:          params.Route,
+		IdempotencyKey: params.IdempotencyKey,
 	})
 	if err != nil {
 		return nil, err

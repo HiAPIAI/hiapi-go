@@ -27,6 +27,17 @@ var (
 	ErrTaskTimeout = errors.New("hiapi: task timeout")
 	// ErrStorageUnavailable maps error_code=STORAGE_UNAVAILABLE — output storage error.
 	ErrStorageUnavailable = errors.New("hiapi: storage unavailable")
+	// ErrIdempotencyKeyProcessing maps error_code=IDEMPOTENCY_KEY_PROCESSING
+	// (409) — the first request with this Idempotency-Key is still in flight.
+	// Retryable: wait Retry-After seconds and resend the identical request; it
+	// will replay the original task once created. The transport already retries
+	// this automatically up to maxRetries before letting it surface.
+	ErrIdempotencyKeyProcessing = errors.New("hiapi: idempotency key still processing")
+	// ErrIdempotencyKeyMismatch maps error_code=IDEMPOTENCY_KEY_MISMATCH (422) —
+	// this Idempotency-Key was already used with a different request body. Not
+	// retryable: the key construction is buggy (two distinct requests derived
+	// the same key).
+	ErrIdempotencyKeyMismatch = errors.New("hiapi: idempotency key reused with a different body")
 )
 
 // APIError is returned when the server responds with a non-2xx status.
@@ -132,11 +143,13 @@ func (e *WebhookError) Unwrap() error { return e.Err }
 
 // errorCodeToSentinel maps the API error_code enum onto a sentinel error.
 var errorCodeToSentinel = map[string]error{
-	"INVALID_REQUEST":     ErrInvalidRequest,
-	"MODEL_UNAVAILABLE":   ErrModelUnavailable,
-	"TASK_FAILED":         ErrTaskFailedSync,
-	"TASK_TIMEOUT":        ErrTaskTimeout,
-	"STORAGE_UNAVAILABLE": ErrStorageUnavailable,
+	"INVALID_REQUEST":            ErrInvalidRequest,
+	"MODEL_UNAVAILABLE":          ErrModelUnavailable,
+	"TASK_FAILED":                ErrTaskFailedSync,
+	"TASK_TIMEOUT":               ErrTaskTimeout,
+	"STORAGE_UNAVAILABLE":        ErrStorageUnavailable,
+	"IDEMPOTENCY_KEY_PROCESSING": ErrIdempotencyKeyProcessing,
+	"IDEMPOTENCY_KEY_MISMATCH":   ErrIdempotencyKeyMismatch,
 }
 
 // statusToSentinel falls back to a status-based sentinel when no (recognized)

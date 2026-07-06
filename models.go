@@ -65,8 +65,11 @@ type Task struct {
 	CreatedAt   int64
 	CompletedAt int64
 	Storage     string
-	Output      []Output
-	Error       *TaskError
+	// Route is echoed only when the task was submitted with an explicit route
+	// parameter; Model then holds the resolved full name (base@route).
+	Route  string
+	Output []Output
+	Error  *TaskError
 	// Raw is the full decoded JSON object for this task.
 	Raw map[string]any
 }
@@ -85,6 +88,7 @@ func taskFromMap(m map[string]any) *Task {
 		CreatedAt:   asInt64(m["created"]),
 		CompletedAt: asInt64(m["completed"]),
 		Storage:     asString(m["storage"]),
+		Route:       asString(m["route"]),
 		Raw:         m,
 	}
 	if outs, ok := m["output"].([]any); ok {
@@ -103,6 +107,11 @@ func taskFromMap(m map[string]any) *Task {
 // CreatedTask is the thin response of POST /v1/tasks — just the new task id.
 type CreatedTask struct {
 	TaskID string
+	// IdempotentReplay is true when the server answered from the idempotency
+	// cache (the request carried an Idempotency-Key it had already fulfilled):
+	// TaskID is the task created by the first request, and no new task was
+	// created or billed.
+	IdempotentReplay bool
 	// Raw is the full decoded JSON object.
 	Raw map[string]any
 }
