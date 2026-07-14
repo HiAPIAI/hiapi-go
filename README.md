@@ -56,7 +56,14 @@ func main() {
 
 `Run` blocks until the task reaches a terminal state. It returns a
 `*TaskFailedError` if the task fails and a `*PollTimeoutError` if it doesn't
-finish within `Timeout` (default 600s).
+finish within `Timeout` (default 600s). A poll timeout does **not** cancel the
+task — it may still finish (and bill) later; take `TaskID` from the
+`*PollTimeoutError` and `Retrieve` it instead of submitting the same request again.
+
+Output URLs are **temporary** — they expire about 7 days after creation (each
+output carries `ExpireAt`). To keep an output long-term, promote it to
+persistent storage before it expires — see the
+[Output Storage docs](https://docs.hiapi.ai/storage/).
 
 ## Lower-level control
 
@@ -68,6 +75,9 @@ created, err := client.Tasks.Create(ctx, hiapi.CreateParams{
 	Input:    map[string]any{"prompt": "...", "resolution": "720p"},
 	Callback: map[string]any{"url": "https://your-app.com/hiapi/callback", "when": "final"},
 })
+if err != nil {
+	log.Fatal(err)
+}
 // created.TaskID
 
 task, err := client.Tasks.Retrieve(ctx, created.TaskID) // one status check
@@ -114,6 +124,9 @@ created, err := client.Tasks.Create(ctx, hiapi.CreateParams{
 	Input:          map[string]any{"prompt": "..."},
 	IdempotencyKey: "order-8472:video", // a stable key you derive per job
 })
+if err != nil {
+	log.Fatal(err)
+}
 if created.IdempotentReplay {
 	log.Println("hit the idempotency cache; no new task created")
 }
@@ -172,8 +185,10 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-Callbacks are delivered **at least once** and can arrive concurrently — deduplicate
-by `task.TaskID` (e.g. an insert that no-ops on conflict) before acting on the event.
+Callbacks are delivered **at least once** and can arrive concurrently — make your
+handler idempotent (e.g. upsert your own record keyed by `task.TaskID`) and return
+2xx only after processing succeeds. Duplicates are then harmless, and a failed or
+crashed handler is simply redelivered.
 
 ## Errors
 
