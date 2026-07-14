@@ -71,7 +71,7 @@ created, err := client.Tasks.Create(ctx, hiapi.CreateParams{
 // created.TaskID
 
 task, err := client.Tasks.Retrieve(ctx, created.TaskID) // one status check
-task, err := client.Tasks.Wait(ctx, created.TaskID, hiapi.WaitParams{
+task, err = client.Tasks.Wait(ctx, created.TaskID, hiapi.WaitParams{
 	PollInterval: 3 * time.Second,
 	Timeout:      15 * time.Minute,
 })
@@ -84,28 +84,29 @@ page, err := client.Tasks.List(ctx, hiapi.ListParams{Page: 1, Size: 20}) // newe
 
 ## Model routes
 
-Some models expose multiple routes (e.g. `pro`, `ext`) with different pricing or
+Some models expose multiple routes (e.g. `ext`) with different pricing or
 upstream capacity. Pass `Route` instead of writing the `model@route` suffix:
 
 ```go
 created, err := client.Tasks.Create(ctx, hiapi.CreateParams{
 	Model: "gpt-image-2/text-to-image",
-	Route: "pro", // preferred over Model: "...@pro"
+	Route: "ext", // preferred over Model: "...@ext"
 	Input: map[string]any{"prompt": "..."},
 })
 ```
 
 Omitting `Route` (or passing `"default"`) uses the model's default route. An
 unknown route fails fast with a 400 whose message lists the available routes.
-The legacy `Model: "x@pro"` spelling keeps working. When a task was submitted
+The legacy `Model: "x@ext"` spelling keeps working. When a task was submitted
 with `Route`, its detail echoes `task.Route` and `task.Model` holds the
-resolved full name (`x@pro`).
+resolved full name (`x@ext`).
 
 ## Idempotent retries
 
 Set `IdempotencyKey` (sent as the `Idempotency-Key` header, ≤255 bytes) to make
-task submission safe to retry — same key + same body always returns the first
-task instead of creating and billing a new one:
+task submission safe to retry — retrying the same key + same body within about
+24 hours returns the first task instead of creating and billing a new one
+(after that the key is cleaned up and the same request creates a new task):
 
 ```go
 created, err := client.Tasks.Create(ctx, hiapi.CreateParams{
@@ -129,23 +130,50 @@ If you set a **Webhook signing key** in the HiAPI console, terminal callbacks ar
 signed. Verify them against the **raw request body**:
 
 ```go
-client, _ := hiapi.New("sk-...", hiapi.WithWebhookSecret("whsec_..."))
+package main
+
+import (
+	"io"
+	"log"
+	"net/http"
+
+	hiapi "github.com/HiAPIAI/hiapi-go"
+)
+
+var client *hiapi.Client
+
+func main() {
+	var err error
+	client, err = hiapi.New("sk-...", hiapi.WithWebhookSecret("whsec_..."))
+	if err != nil {
+		log.Fatal(err)
+	}
+	http.HandleFunc("/hiapi/callback", handler)
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+const maxBodyBytes = 1 << 20 // 1 MiB — HiAPI payloads are well under this
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err != nil {
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		return
+	}
 	task, err := client.Webhooks.Verify(body, r.Header, hiapi.VerifyParams{})
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	if task.Succeeded() {
+	if task.Succeeded() && len(task.Output) > 0 {
 		log.Println(task.Output[0].URL)
 	}
 	w.WriteHeader(http.StatusOK) // ack with 2xx; HiAPI retries non-2xx
 }
 ```
 
-Callbacks are delivered **at least once** — deduplicate by `task.TaskID`.
+Callbacks are delivered **at least once** and can arrive concurrently — deduplicate
+by `task.TaskID` (e.g. an insert that no-ops on conflict) before acting on the event.
 
 ## Errors
 
