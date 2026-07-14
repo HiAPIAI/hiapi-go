@@ -4,9 +4,9 @@ Zero-dependency Go client for the [HiAPI](https://hiapi.ai) **unified async task
 
 - **Zero dependencies.** Standard library only (`net/http`, `crypto/hmac`, `encoding/json`).
 - **One-call workflow.** `client.Tasks.Run(...)` submits and waits for you.
-- **Context-aware.** Every call takes a `context.Context` for cancellation and deadlines.
+- **Context-aware.** Every task API call takes a `context.Context` for cancellation and deadlines.
 - **Idiomatic errors.** Inspect with `errors.Is` / `errors.As`.
-- **Webhook verification.** HMAC-SHA256 signature + replay check, built in.
+- **Webhook verification.** HMAC-SHA256 signature + timestamp freshness check, built in (still deduplicate deliveries by task id).
 
 > For OpenAI-compatible chat/image endpoints, point an OpenAI-compatible client at
 > `https://api.hiapi.ai/v1`. This SDK focuses on what that can't do: the
@@ -120,8 +120,8 @@ if created.IdempotentReplay {
 ```
 
 With a key set, the SDK also retries the POST on network errors and
-automatically waits out `409 IDEMPOTENCY_KEY_PROCESSING` (the first request is
-still in flight). Reusing a key with a **different** body fails with
+retries `409 IDEMPOTENCY_KEY_PROCESSING` (the first request is
+still in flight) up to the retry limit (default 2), honouring `Retry-After` capped at 60s. Reusing a key with a **different** body fails with
 `ErrIdempotencyKeyMismatch` — that's a key-construction bug, not retryable.
 
 ## Webhooks
@@ -186,6 +186,7 @@ raw body) with `errors.As`.
 | `ErrNotFound` | 404 — unknown task or not yours |
 | `ErrInvalidRequest` | `INVALID_REQUEST` — fix the request |
 | `ErrModelUnavailable` | `MODEL_UNAVAILABLE` — retry or switch model |
+| `ErrTaskFailedSync` | `TASK_FAILED` — the submission was rejected synchronously (distinct from `*TaskFailedError` below) |
 | `ErrTaskTimeout` / `ErrStorageUnavailable` | retryable upstream errors |
 | `ErrServiceUnavailable` | 503 — platform busy (auto-retried) |
 | `ErrIdempotencyKeyProcessing` | 409 — same key still in flight (auto-retried; retryable) |
@@ -229,9 +230,12 @@ client, err := hiapi.New(
 	hiapi.WithTimeout(60*time.Second),         // per-request
 	hiapi.WithMaxRetries(2),
 	hiapi.WithWebhookSecret("whsec_..."),      // or HIAPI_WEBHOOK_SECRET
-	hiapi.WithHTTPClient(customClient),        // proxies, custom TLS, instrumentation
 )
 ```
+
+To supply your own `*http.Client` (proxies, custom TLS, instrumentation), use
+`hiapi.WithHTTPClient(customClient)` — note it takes over transport entirely, so
+`WithTimeout` is ignored and the custom client's own `Timeout` applies instead.
 
 The `Client` is safe for concurrent use by multiple goroutines.
 
