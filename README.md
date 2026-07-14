@@ -217,9 +217,12 @@ default 2; honors `Retry-After`). Network errors are retried **only for
 idempotent GETs** (`Retrieve` / `List`, and the polling inside `Wait` / `Run`).
 The `POST` that `Create` issues is **never** retried on a network failure —
 unless you set `IdempotencyKey`, which makes the retry safe server-side.
-Without a key, a dropped connection can't silently create a second,
-double-charged task — if `Create` returns a `*ConnectionError`, confirm with
-`List` before retrying.
+Without a key, a `*ConnectionError` from `Create` leaves the request in an
+**unknown** state — a task may or may not have been created (and billed).
+`List` can help you inspect recent tasks manually, but tasks don't echo your
+`Input` back, so absence from the list doesn't prove the request failed —
+don't retry automatically on that basis. For anything automated, submit with
+an `IdempotencyKey` so the retry is safe by design.
 
 ## Configuration
 
