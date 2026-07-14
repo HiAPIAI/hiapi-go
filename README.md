@@ -10,7 +10,7 @@ Zero-dependency Go client for the [HiAPI](https://hiapi.ai) **unified async task
 
 > For OpenAI-compatible chat/image endpoints, point an OpenAI-compatible client at
 > `https://api.hiapi.ai/v1`. This SDK focuses on what that can't do: the
-> asynchronous **submit → poll → download** lifecycle.
+> asynchronous **submit → poll → retrieve** lifecycle (results come back as output URLs).
 
 ## Install
 
