@@ -274,7 +274,7 @@ func errorFromResponse(status int, raw []byte) *APIError {
 }
 
 // normalizeBaseURL strips trailing slashes and ensures the /v1 prefix is
-// present, accepting both https://api.hiapi.ai and https://api.hiapi.ai/v1.
+// present, accepting both https://api.hiapi.sh and https://api.hiapi.sh/v1.
 func normalizeBaseURL(base string) string {
 	base = strings.TrimRight(base, "/")
 	if !strings.HasSuffix(base, "/v1") {

@@ -20,7 +20,7 @@ func main() {
 	}
 
 	task, err := client.Tasks.Run(context.Background(), hiapi.RunParams{
-		Model: "seedance-2-0",
+		Model: "seedance-2.0",
 		Input: map[string]any{
 			"prompt":     "a cyan glass data center, slow dolly in",
 			"resolution": "1080p",

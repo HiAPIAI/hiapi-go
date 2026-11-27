@@ -9,7 +9,7 @@ import (
 
 // Default client configuration.
 const (
-	DefaultBaseURL    = "https://api.hiapi.ai/v1"
+	DefaultBaseURL    = "https://api.hiapi.sh/v1"
 	DefaultTimeout    = 60 * time.Second
 	DefaultMaxRetries = 2
 )
@@ -40,7 +40,8 @@ type config struct {
 	httpClient    *http.Client
 }
 
-// WithBaseURL overrides the API base URL. A missing /v1 suffix is added.
+// WithBaseURL overrides the API base URL (and the HIAPI_BASE_URL environment
+// variable). A missing /v1 suffix is added.
 func WithBaseURL(u string) Option { return func(c *config) { c.baseURL = u } }
 
 // WithTimeout sets the per-request timeout. Ignored if WithHTTPClient is used.
@@ -80,8 +81,12 @@ func New(apiKey string, opts ...Option) (*Client, error) {
 		)
 	}
 
+	baseURL := os.Getenv("HIAPI_BASE_URL")
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
+	}
 	cfg := config{
-		baseURL:    DefaultBaseURL,
+		baseURL:    baseURL,
 		timeout:    DefaultTimeout,
 		maxRetries: DefaultMaxRetries,
 	}

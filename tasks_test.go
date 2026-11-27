@@ -45,7 +45,7 @@ func TestCreate(t *testing.T) {
 
 	c := newTestClient(t, srv)
 	ct, err := c.Tasks.Create(context.Background(), CreateParams{
-		Model: "seedance-2-0",
+		Model: "seedance-2.0",
 		Input: map[string]any{"prompt": "hi"},
 	})
 	if err != nil {
@@ -54,7 +54,7 @@ func TestCreate(t *testing.T) {
 	if ct.TaskID != "created-1" {
 		t.Fatalf("taskId: %q", ct.TaskID)
 	}
-	if !strings.Contains(gotBody, `"model":"seedance-2-0"`) || !strings.Contains(gotBody, `"prompt":"hi"`) {
+	if !strings.Contains(gotBody, `"model":"seedance-2.0"`) || !strings.Contains(gotBody, `"prompt":"hi"`) {
 		t.Fatalf("request body: %s", gotBody)
 	}
 }
@@ -302,7 +302,7 @@ func (rt *countingRT) RoundTrip(*http.Request) (*http.Response, error) {
 func clientWithRT(t *testing.T, rt http.RoundTripper) *Client {
 	t.Helper()
 	c, err := New("sk-test",
-		WithBaseURL("https://api.hiapi.ai/v1"),
+		WithBaseURL("https://api.hiapi.sh/v1"),
 		WithMaxRetries(3),
 		WithHTTPClient(&http.Client{Transport: rt}),
 	)
@@ -412,14 +412,37 @@ func TestNew_EnvKeyFallback(t *testing.T) {
 
 func TestBaseURLNormalization(t *testing.T) {
 	cases := map[string]string{
-		"https://api.hiapi.ai":     "https://api.hiapi.ai/v1",
-		"https://api.hiapi.ai/":    "https://api.hiapi.ai/v1",
-		"https://api.hiapi.ai/v1":  "https://api.hiapi.ai/v1",
-		"https://api.hiapi.ai/v1/": "https://api.hiapi.ai/v1",
+		"https://api.hiapi.sh":     "https://api.hiapi.sh/v1",
+		"https://api.hiapi.sh/":    "https://api.hiapi.sh/v1",
+		"https://api.hiapi.sh/v1":  "https://api.hiapi.sh/v1",
+		"https://api.hiapi.sh/v1/": "https://api.hiapi.sh/v1",
 	}
 	for in, want := range cases {
 		if got := normalizeBaseURL(in); got != want {
 			t.Errorf("normalizeBaseURL(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestBaseURLEnvPriority(t *testing.T) {
+	t.Setenv("HIAPI_BASE_URL", "https://env.example.com")
+	c, err := New("sk-test")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if c.baseURL != "https://env.example.com/v1" {
+		t.Fatalf("env: %q", c.baseURL)
+	}
+	c, err = New("sk-test", WithBaseURL("https://opt.example.com"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if c.baseURL != "https://opt.example.com/v1" {
+		t.Fatalf("option: %q", c.baseURL)
+	}
+	t.Setenv("HIAPI_BASE_URL", "")
+	c, _ = New("sk-test")
+	if c.baseURL != DefaultBaseURL {
+		t.Fatalf("default: %q", c.baseURL)
 	}
 }

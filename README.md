@@ -9,7 +9,7 @@ Zero-dependency Go client for the [HiAPI](https://hiapi.ai) **unified async task
 - **Webhook verification.** HMAC-SHA256 signature + timestamp freshness check, built in (still deduplicate deliveries by task id).
 
 > For OpenAI-compatible chat/image endpoints, point an OpenAI-compatible client at
-> `https://api.hiapi.ai/v1`. This SDK focuses on what that can't do: the
+> `https://api.hiapi.sh/v1`. This SDK focuses on what that can't do: the
 > asynchronous **submit → poll → retrieve** lifecycle (results come back as output URLs).
 
 ## Install
@@ -40,7 +40,7 @@ func main() {
 	}
 
 	task, err := client.Tasks.Run(context.Background(), hiapi.RunParams{
-		Model: "seedance-2-0",
+		Model: "seedance-2.0",
 		Input: map[string]any{"prompt": "a cyan glass data center", "resolution": "1080p"},
 		OnUpdate: func(t *hiapi.Task) { log.Println("status:", t.Status) },
 	})
@@ -71,7 +71,7 @@ persistent storage before it expires — see the
 ctx := context.Background()
 
 created, err := client.Tasks.Create(ctx, hiapi.CreateParams{
-	Model:    "seedance-2-0",
+	Model:    "seedance-2.0",
 	Input:    map[string]any{"prompt": "...", "resolution": "720p"},
 	Callback: map[string]any{"url": "https://your-app.com/hiapi/callback", "when": "final"},
 })
@@ -120,7 +120,7 @@ task submission safe to retry — retrying the same key + same body within about
 
 ```go
 created, err := client.Tasks.Create(ctx, hiapi.CreateParams{
-	Model:          "seedance-2-0",
+	Model:          "seedance-2.0",
 	Input:          map[string]any{"prompt": "..."},
 	IdempotencyKey: "order-8472:video", // a stable key you derive per job
 })
@@ -244,7 +244,7 @@ an `IdempotencyKey` so the retry is safe by design.
 ```go
 client, err := hiapi.New(
 	"sk-...",                                  // or "" to read HIAPI_API_KEY
-	hiapi.WithBaseURL("https://api.hiapi.ai/v1"),
+	hiapi.WithBaseURL("https://api.hiapi.sh/v1"),  // or set HIAPI_BASE_URL
 	hiapi.WithTimeout(60*time.Second),         // per-request
 	hiapi.WithMaxRetries(2),
 	hiapi.WithWebhookSecret("whsec_..."),      // or HIAPI_WEBHOOK_SECRET
