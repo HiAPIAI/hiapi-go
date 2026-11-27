@@ -1,5 +1,5 @@
 // Package hiapi is a zero-dependency Go client for the HiAPI unified async
-// task API (https://api.hiapi.ai/v1).
+// task API (https://api.hiapi.sh/v1).
 //
 // HiAPI exposes one lifecycle for every model — image, video, and audio
 // generation alike: submit a task, poll until it finishes, then read its
@@ -14,7 +14,7 @@
 //		log.Fatal(err)
 //	}
 //	task, err := client.Tasks.Run(context.Background(), hiapi.RunParams{
-//		Model: "seedance-2-0",
+//		Model: "seedance-2.0",
 //		Input: map[string]any{"prompt": "a cyan glass data center", "resolution": "1080p"},
 //		OnUpdate: func(t *hiapi.Task) { log.Println(t.Status) },
 //	})

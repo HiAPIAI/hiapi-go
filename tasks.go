@@ -24,7 +24,7 @@ type Tasks struct {
 
 // CreateParams are the inputs to [Tasks.Create].
 type CreateParams struct {
-	// Model is the model id, e.g. "seedance-2-0".
+	// Model is the model id, e.g. "seedance-2.0".
 	Model string
 	// Input holds the model's business parameters (fields vary per model).
 	Input map[string]any

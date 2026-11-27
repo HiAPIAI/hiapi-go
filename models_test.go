@@ -18,7 +18,7 @@ func decode(t *testing.T, s string) map[string]any {
 func TestTaskFromMap_SuccessWithOutput(t *testing.T) {
 	m := decode(t, `{
 		"taskId": "abc123",
-		"model": "seedance-2-0",
+		"model": "seedance-2.0",
 		"status": "success",
 		"created": 1781492551,
 		"completed": 1781493577,
@@ -27,7 +27,7 @@ func TestTaskFromMap_SuccessWithOutput(t *testing.T) {
 	}`)
 	task := taskFromMap(m)
 
-	if task.TaskID != "abc123" || task.Model != "seedance-2-0" {
+	if task.TaskID != "abc123" || task.Model != "seedance-2.0" {
 		t.Fatalf("ids: %+v", task)
 	}
 	if task.Status != "success" || !task.Succeeded() || !task.IsTerminal() {
